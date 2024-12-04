@@ -2,10 +2,10 @@
 Agentic sampling loop that calls the Anthropic API and local implementation of anthropic-defined tools.
 """
 
+import json
 import platform
 from collections.abc import Callable
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, cast
 
 import httpx
@@ -74,7 +74,6 @@ async def sampling_loop(
 
     while True:
         client = Anthropic(api_key=api_key, max_retries=4)
-        # computer use flag is required for using the built-in bash and edit tools
         betas = [PROMPT_CACHING_BETA_FLAG, COMPUTER_USE_BETA_FLAG]
         _inject_prompt_caching(messages)
         system["cache_control"] = {"type": "ephemeral"}
@@ -87,44 +86,84 @@ async def sampling_loop(
                 system=[system],
                 tools=tool_collection.to_params(),
                 betas=betas,
+                stream=True,
             )
+
+            # Store the request for later
+            request = raw_response.http_response.request
+            accumulated_content = []
+            response_params = []
+            current_block = None
+            
+            for chunk in raw_response.parse():
+                accumulated_content.append(chunk.model_dump_json())  # Accumulate the content
+                if chunk.type == "message_start":
+                    continue
+                elif chunk.type == "content_block_start":
+                    current_block = {"type": chunk.content_block.type}
+                    if chunk.content_block.type == "tool_use":
+                        current_block.update({
+                            "name": chunk.content_block.name,
+                            "id": chunk.content_block.id,
+                            "input": ""
+                        })
+                elif chunk.type == "content_block_delta":
+                    if current_block["type"] == "text":
+                        if "text" not in current_block:
+                            current_block["text"] = ""
+                        current_block["text"] += chunk.delta.text
+                        output_callback(current_block)
+                    elif current_block["type"] == "tool_use":
+                        if chunk.delta.partial_json:
+                            current_block["input"] += chunk.delta.partial_json
+                        output_callback(current_block)
+                elif chunk.type == "content_block_stop":
+                    if current_block:
+                        if current_block["type"] == "tool_use":
+                            current_block["input"] = json.loads(current_block["input"])
+                        response_params.append(current_block)
+                        current_block = None
+
+            # Create a response with the accumulated content
+            response = httpx.Response(
+                status_code=raw_response.http_response.status_code,
+                headers=raw_response.http_response.headers,
+                content=f'[{",".join(accumulated_content)}]'.encode(),
+                request=request
+            )
+            api_response_callback(request, response, None)
+
+            # Add the assistant's response to messages
+            if response_params:
+                messages.append({
+                    "role": "assistant",
+                    "content": response_params
+                })
+
+            tool_result_content: list[BetaToolResultBlockParam] = []
+            for content_block in response_params:
+                if content_block["type"] == "tool_use":
+                    result = await tool_collection.run(
+                        name=content_block["name"],
+                        tool_input=cast(dict[str, Any], content_block["input"]),
+                    )
+                    tool_result_content.append(
+                        _make_api_tool_result(result, content_block["id"])
+                    )
+                    tool_output_callback(result, content_block["id"])
+
+            if tool_result_content:
+                messages.append({"content": tool_result_content, "role": "user"})
+                continue
+
+            return
+
         except (APIStatusError, APIResponseValidationError) as e:
             api_response_callback(e.request, e.response, e)
-            return messages
+            return
         except APIError as e:
             api_response_callback(e.request, e.body, e)
-            return messages
-
-        api_response_callback(
-            raw_response.http_response.request, raw_response.http_response, None
-        )
-
-        response = raw_response.parse()
-        response_params = _response_to_params(response)
-        messages.append(
-            {
-                "role": "assistant",
-                "content": response_params,
-            }
-        )
-
-        tool_result_content: list[BetaToolResultBlockParam] = []
-        for content_block in response_params:
-            output_callback(content_block)
-            if content_block["type"] == "tool_use":
-                result = await tool_collection.run(
-                    name=content_block["name"],
-                    tool_input=cast(dict[str, Any], content_block["input"]),
-                )
-                tool_result_content.append(
-                    _make_api_tool_result(result, content_block["id"])
-                )
-                tool_output_callback(result, content_block["id"])
-
-        if not tool_result_content:
-            return messages
-
-        messages.append({"content": tool_result_content, "role": "user"})
+            return
 
 
 def _response_to_params(

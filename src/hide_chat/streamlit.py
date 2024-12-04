@@ -5,7 +5,6 @@ Entrypoint for streamlit, see https://docs.streamlit.io/
 import asyncio
 import base64
 import os
-import subprocess
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -151,7 +150,7 @@ async def main():
 
         with track_sampling_loop():
             # run the agent sampling loop with the newest message
-            st.session_state.messages = await sampling_loop(
+            await sampling_loop(
                 system_prompt_suffix=st.session_state.custom_system_prompt,
                 messages=st.session_state.messages,
                 output_callback=partial(_render_message, Sender.BOT),
@@ -297,32 +296,48 @@ def _render_message(
     message: str | BetaContentBlockParam | ToolResult,
 ):
     """Convert input from the user or output from the agent to a streamlit message."""
-    # streamlit's hotreloading breaks isinstance checks, so we need to check for class names
     is_tool_result = not isinstance(message, str | dict)
     if not message:
         return
-    with st.chat_message(sender):
-        if is_tool_result:
-            message = cast(ToolResult, message)
-            if message.output:
-                if message.__class__.__name__ == "CLIResult":
-                    st.code(message.output)
-                else:
-                    st.markdown(message.output)
-            if message.error:
-                st.error(message.error)
-            if message.base64_image:
-                st.image(base64.b64decode(message.base64_image))
-        elif isinstance(message, dict):
-            if message["type"] == "text":
-                st.write(message["text"])
-            elif message["type"] == "tool_use":
-                st.code(f'Tool Use: {message["name"]}\nInput: {message["input"]}')
+    
+    # Get message type
+    message_type = "tool_result" if is_tool_result else (
+        message["type"] if isinstance(message, dict) else "text"
+    )
+    
+    # Create new message container if sender or type changes
+    if (not hasattr(st.session_state, 'current_sender') or 
+        st.session_state.current_sender != sender or
+        st.session_state.current_type != message_type):
+        st.session_state.current_message = st.chat_message(sender)
+        st.session_state.current_placeholder = st.session_state.current_message.empty()
+        st.session_state.current_sender = sender
+        st.session_state.current_type = message_type
+
+    if is_tool_result:
+        message = cast(ToolResult, message)
+        if message.output:
+            if message.__class__.__name__ == "CLIResult":
+                st.session_state.current_placeholder.code(message.output)
             else:
-                # only expected return types are text and tool_use
-                raise Exception(f'Unexpected response type {message["type"]}')
+                st.session_state.current_placeholder.markdown(message.output)
+        if message.error:
+            st.session_state.current_placeholder.error(message.error)
+        if message.base64_image:
+            st.session_state.current_placeholder.image(base64.b64decode(message.base64_image))
+        # Reset sender after tool result
+        st.session_state.current_sender = None
+    elif isinstance(message, dict):
+        if message["type"] == "text":
+            st.session_state.current_placeholder.markdown(message["text"])
+        elif message["type"] == "tool_use":
+            st.session_state.current_placeholder.code(
+                f'Tool Use: {message["name"]}\nInput: {message["input"]}'
+            )
         else:
-            st.markdown(message)
+            raise Exception(f'Unexpected response type {message["type"]}')
+    else:
+        st.session_state.current_placeholder.markdown(message)
 
 
 if __name__ == "__main__":
