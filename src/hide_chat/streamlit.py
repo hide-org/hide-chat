@@ -310,7 +310,11 @@ def _render_message(
         st.session_state.current_sender != sender or
         st.session_state.current_type != message_type):
         st.session_state.current_message = st.chat_message(sender)
-        st.session_state.current_placeholder = st.session_state.current_message.empty()
+        if message_type in ["tool_use", "tool_result"]:
+            with st.session_state.current_message.expander(message_type.replace("_", " ").title(), expanded=False):
+                st.session_state.current_placeholder = st.empty()
+        else:
+            st.session_state.current_placeholder = st.session_state.current_message.empty()
         st.session_state.current_sender = sender
         st.session_state.current_type = message_type
 
@@ -325,14 +329,13 @@ def _render_message(
             st.session_state.current_placeholder.error(message.error)
         if message.base64_image:
             st.session_state.current_placeholder.image(base64.b64decode(message.base64_image))
-        # Reset sender after tool result
         st.session_state.current_sender = None
     elif isinstance(message, dict):
         if message["type"] == "text":
             st.session_state.current_placeholder.markdown(message["text"])
         elif message["type"] == "tool_use":
             st.session_state.current_placeholder.code(
-                f'Tool Use: {message["name"]}\nInput: {message["input"]}'
+                f'Tool: {message["name"]}\nInput: {message["input"]}'
             )
         else:
             raise Exception(f'Unexpected response type {message["type"]}')
