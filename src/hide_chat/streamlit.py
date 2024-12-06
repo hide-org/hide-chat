@@ -12,6 +12,7 @@ from enum import StrEnum
 from functools import partial
 from pathlib import PosixPath
 from typing import cast
+import json
 
 from dotenv import load_dotenv
 import httpx
@@ -73,6 +74,10 @@ def setup_state():
         st.session_state.tools = {}
     if "custom_system_prompt" not in st.session_state:
         st.session_state.custom_system_prompt = load_from_storage("system_prompt") or ""
+    if "current_thread_id" not in st.session_state:
+        st.session_state.current_thread_id = None
+    if "chat_threads" not in st.session_state:
+        st.session_state.chat_threads = load_chat_threads()
     if "in_sampling_loop" not in st.session_state:
         st.session_state.in_sampling_loop = False
 
@@ -87,7 +92,36 @@ async def main():
     st.title("Hide Chat")
 
     with st.sidebar:
-        if st.button("Reset", type="primary"):
+        st.header("Chat Threads")
+        
+        # New chat button
+        if st.button("New Chat", type="primary"):
+            st.session_state.messages = []
+            st.session_state.current_thread_id = None
+            st.rerun()
+        
+        # List existing threads
+        for thread_id, thread_data in sorted(
+            st.session_state.chat_threads.items(),
+            key=lambda x: x[1]["last_updated"],
+            reverse=True
+        ):
+            if st.button(
+                thread_data["preview"],
+                key=f"thread_{thread_id}",
+                use_container_width=True
+            ):
+                # Reset message rendering state
+                if hasattr(st.session_state, 'current_sender'):
+                    del st.session_state.current_sender
+                if hasattr(st.session_state, 'current_type'):
+                    del st.session_state.current_type
+                st.session_state.current_thread_id = thread_id
+                st.session_state.messages = thread_data["messages"]
+                st.rerun()
+        
+        # Reset button at the bottom
+        if st.button("Reset All", type="primary"):
             with st.spinner("Resetting..."):
                 st.session_state.clear()
                 setup_state()
@@ -110,17 +144,10 @@ async def main():
                 _render_message(message["role"], message["content"])
             elif isinstance(message["content"], list):
                 for block in message["content"]:
-                    # the tool result we send back to the Anthropic API isn't sufficient to render all details,
-                    # so we store the tool use responses
-                    if isinstance(block, dict) and block["type"] == "tool_result":
-                        _render_message(
-                            Sender.TOOL, st.session_state.tools[block["tool_use_id"]]
-                        )
-                    else:
-                        _render_message(
-                            message["role"],
-                            cast(BetaContentBlockParam | ToolResult, block),
-                        )
+                    _render_message(
+                        Sender.TOOL if block["type"] == "tool_result" else message["role"],
+                        cast(BetaContentBlockParam | ToolResult, block),
+                    )
 
         # render past http exchanges
         for identity, (request, response) in st.session_state.responses.items():
@@ -138,6 +165,11 @@ async def main():
                 }
             )
             _render_message(Sender.USER, new_message)
+            # Auto-save after new message
+            st.session_state.current_thread_id = save_chat_thread(
+                st.session_state.messages,
+                st.session_state.current_thread_id
+            )
 
         try:
             most_recent_message = st.session_state["messages"][-1]
@@ -163,6 +195,11 @@ async def main():
                     response_state=st.session_state.responses,
                 ),
                 api_key=st.session_state.api_key,
+            )
+            # Save chat thread after bot response
+            st.session_state.current_thread_id = save_chat_thread(
+                st.session_state.messages,
+                st.session_state.current_thread_id
             )
 
 
@@ -337,10 +374,67 @@ def _render_message(
             st.session_state.current_placeholder.code(
                 f'Tool: {message["name"]}\nInput: {message["input"]}'
             )
+        elif message["type"] == "tool_result":
+            for content in message.get("content", []):
+                if content.get("type") == "text":
+                    st.session_state.current_placeholder.code(content.get("text"))
         else:
             raise Exception(f'Unexpected response type {message["type"]}')
     else:
         st.session_state.current_placeholder.markdown(message)
+
+
+def save_chat_thread(messages, thread_id=None):
+    """Save chat thread to storage"""
+    if not thread_id:
+        thread_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    thread_data = {
+        "messages": messages,
+        "last_updated": datetime.now().isoformat(),
+        "preview": _generate_preview(messages)
+    }
+    
+    try:
+        threads_dir = CONFIG_DIR / "chat_threads"
+        threads_dir.mkdir(parents=True, exist_ok=True)
+        
+        with open(threads_dir / f"{thread_id}.json", "w") as f:
+            json.dump(thread_data, f)
+        return thread_id
+    except Exception as e:
+        st.error(f"Failed to save chat thread: {e}")
+        return None
+
+def load_chat_threads():
+    """Load all chat threads from storage"""
+    threads_dir = CONFIG_DIR / "chat_threads"
+    threads = {}
+    
+    if threads_dir.exists():
+        for thread_file in threads_dir.glob("*.json"):
+            try:
+                with open(thread_file, "r") as f:
+                    thread_data = json.load(f)
+                    thread_id = thread_file.stem
+                    threads[thread_id] = thread_data
+            except Exception as e:
+                st.error(f"Failed to load thread {thread_file}: {e}")
+    
+    return threads
+
+def _generate_preview(messages, max_length=50):
+    """Generate a preview of the chat thread from the first user message"""
+    for message in messages:
+        if message["role"] == Sender.USER:
+            content = message["content"]
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block["type"] == "text":
+                        return block["text"][:max_length] + "..."
+            elif isinstance(content, str):
+                return content[:max_length] + "..."
+    return "Empty chat"
 
 
 if __name__ == "__main__":
