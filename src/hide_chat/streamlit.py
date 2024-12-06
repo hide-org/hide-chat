@@ -120,6 +120,8 @@ def setup_state():
         st.session_state.auth_validated = False
     if "responses" not in st.session_state:
         st.session_state.responses = {}
+    if "tools" not in st.session_state:
+        st.session_state.tools = {}
     if "custom_system_prompt" not in st.session_state:
         st.session_state.custom_system_prompt = load_from_storage("system_prompt") or ""
     if "current_thread_id" not in st.session_state:
