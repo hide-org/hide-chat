@@ -32,7 +32,7 @@ CONFIG_DIR = PosixPath("~/.anthropic").expanduser()
 API_KEY_FILE = CONFIG_DIR / "api_key"
 STREAMLIT_STYLE = """
 <style>
-    /* Highlight the stop button in red */
+    /* Highlight the stop button with a friendly blue */
     button[kind=header] {
         background-color: rgb(255, 75, 75);
         border: 1px solid rgb(255, 75, 75);
@@ -44,6 +44,56 @@ STREAMLIT_STYLE = """
      /* Hide the streamlit deploy button */
     .stAppDeployButton {
         visibility: hidden;
+    }
+
+    /* Style for thread buttons */
+    .thread-button {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+        background-color: white;
+        transition: all 0.2s ease;
+    }
+    .thread-button:hover {
+        border-color: #1f77b4;
+        background-color: #f0f8ff;
+    }
+    
+    /* Style for action buttons */
+    .action-button {
+        border-radius: 20px;
+        padding: 8px 16px;
+        margin: 8px 0;
+        width: 100%;
+    }
+    
+    /* Thread preview text styling */
+    .thread-preview {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        line-height: 1.4;
+        max-width: 100%;
+        padding: 8px 0;
+        text-align: left;
+    }
+    
+    /* Make buttons more compact and left-aligned */
+    .stButton button {
+        padding: 0.5rem 1rem;
+        line-height: 1.4;
+        text-align: left !important;
+        justify-content: flex-start !important;
+    }
+    
+    /* Override Streamlit's default button centering */
+    .stButton {
+        text-align: left !important;
+    }
+    
+    /* Hide default Streamlit margins in sidebar */
+    .block-container {
+        padding-top: 1rem;
     }
 </style>
 """
@@ -70,8 +120,6 @@ def setup_state():
         st.session_state.auth_validated = False
     if "responses" not in st.session_state:
         st.session_state.responses = {}
-    if "tools" not in st.session_state:
-        st.session_state.tools = {}
     if "custom_system_prompt" not in st.session_state:
         st.session_state.custom_system_prompt = load_from_storage("system_prompt") or ""
     if "current_thread_id" not in st.session_state:
@@ -92,36 +140,48 @@ async def main():
     st.title("Hide Chat")
 
     with st.sidebar:
-        st.header("Chat Threads")
-        
-        # New chat button
-        if st.button("New Chat", type="primary"):
+        if st.button("New Chat", type="primary", use_container_width=True):
             st.session_state.messages = []
             st.session_state.current_thread_id = None
             st.rerun()
         
-        # List existing threads
+        st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
+        
+        # List existing threads with better formatting
         for thread_id, thread_data in sorted(
             st.session_state.chat_threads.items(),
             key=lambda x: x[1]["last_updated"],
             reverse=True
         ):
-            if st.button(
-                thread_data["preview"],
-                key=f"thread_{thread_id}",
-                use_container_width=True
-            ):
-                # Reset message rendering state
-                if hasattr(st.session_state, 'current_sender'):
-                    del st.session_state.current_sender
-                if hasattr(st.session_state, 'current_type'):
-                    del st.session_state.current_type
-                st.session_state.current_thread_id = thread_id
-                st.session_state.messages = thread_data["messages"]
-                st.rerun()
+            timestamp = datetime.fromisoformat(thread_data["last_updated"]).strftime("%b %d, %H:%M")
+            
+            with st.container():
+                preview_text = thread_data["preview"]
+                timestamp_text = f":clock2: {timestamp}"
+                
+                if st.button(
+                    f"{preview_text}\n\n{timestamp_text}",
+                    key=f"thread_{thread_id}",
+                    use_container_width=True,
+                ):
+                    if hasattr(st.session_state, 'current_sender'):
+                        del st.session_state.current_sender
+                    if hasattr(st.session_state, 'current_type'):
+                        del st.session_state.current_type
+                    st.session_state.current_thread_id = thread_id
+                    st.session_state.messages = thread_data["messages"]
+                    st.rerun()
         
-        # Reset button at the bottom
-        if st.button("Reset All", type="primary"):
+        # Place Reset button at the bottom
+        st.markdown(
+            """
+            <div style='position: fixed; bottom: 20px; width: inherit;'>
+                <hr style='margin: 0 -1rem 1rem -1rem'>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        if st.button("Reset All", type="secondary", use_container_width=True):
             with st.spinner("Resetting..."):
                 st.session_state.clear()
                 setup_state()
@@ -410,7 +470,7 @@ def load_chat_threads():
     """Load all chat threads from storage"""
     threads_dir = CONFIG_DIR / "chat_threads"
     threads = {}
-    
+
     if threads_dir.exists():
         for thread_file in threads_dir.glob("*.json"):
             try:
@@ -420,10 +480,11 @@ def load_chat_threads():
                     threads[thread_id] = thread_data
             except Exception as e:
                 st.error(f"Failed to load thread {thread_file}: {e}")
-    
+
     return threads
 
-def _generate_preview(messages, max_length=50):
+
+def _generate_preview(messages, max_length=100):
     """Generate a preview of the chat thread from the first user message"""
     for message in messages:
         if message["role"] == Sender.USER:
@@ -431,10 +492,12 @@ def _generate_preview(messages, max_length=50):
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block["type"] == "text":
-                        return block["text"][:max_length] + "..."
+                        text = block["text"].replace("\n", " ")
+                        return text[:max_length] + ("..." if len(text) > max_length else "")
             elif isinstance(content, str):
-                return content[:max_length] + "..."
-    return "Empty chat"
+                text = content.replace("\n", " ")
+                return text[:max_length] + ("..." if len(text) > max_length else "")
+    return "New conversation"
 
 
 if __name__ == "__main__":
