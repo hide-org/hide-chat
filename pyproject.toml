@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "anthropic>=0.40.0",
+    "hide-mcp",
+    "mcp>=1.1.0",
     "python-dotenv>=1.0.1",
     "streamlit>=1.40.2",
 ]
@@ -21,3 +23,6 @@ build-backend = "hatchling.build"
 include = ["src"]
 venvPath = "."
 venv = ".venv"
+
+[tool.uv.sources]
+hide-mcp = { path = "../hide-mcp", editable = true }

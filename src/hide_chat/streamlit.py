@@ -27,6 +27,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from hide_chat.loop import sampling_loop
 from hide_chat.tools import ToolResult
+from hide_mcp.sandbox import create_sandbox, kill_sandbox, setup_hide_mcp
 
 CONFIG_DIR = PosixPath("~/.anthropic").expanduser()
 API_KEY_FILE = CONFIG_DIR / "api_key"
@@ -130,6 +131,10 @@ def setup_state():
         st.session_state.chat_threads = load_chat_threads()
     if "in_sampling_loop" not in st.session_state:
         st.session_state.in_sampling_loop = False
+    if "sandbox" not in st.session_state:
+        st.session_state.sandbox = None
+    if "mcp_url" not in st.session_state:
+        st.session_state.mcp_url = None
 
 
 async def main():
@@ -145,6 +150,12 @@ async def main():
         if st.button("New Chat", type="primary", use_container_width=True):
             st.session_state.messages = []
             st.session_state.current_thread_id = None
+            with st.spinner("Creating sandbox..."):
+                if st.session_state.sandbox:
+                    kill_sandbox(st.session_state.sandbox)
+                sbx = create_sandbox()
+                st.session_state.sandbox = sbx
+                st.session_state.mcp_url = setup_hide_mcp(sbx)
             st.rerun()
         
         st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
@@ -172,6 +183,12 @@ async def main():
                         del st.session_state.current_type
                     st.session_state.current_thread_id = thread_id
                     st.session_state.messages = thread_data["messages"]
+                    with st.spinner("Creating sandbox..."):
+                        if st.session_state.sandbox:
+                            kill_sandbox(st.session_state.sandbox)
+                        sbx = create_sandbox()
+                        st.session_state.sandbox = sbx
+                        st.session_state.mcp_url = setup_hide_mcp(sbx)
                     st.rerun()
         
         # Place Reset button at the bottom
@@ -198,6 +215,11 @@ async def main():
 
     chat, http_logs = st.tabs(["Chat", "HTTP Exchange Logs"])
     new_message = st.chat_input("Type a message to send to Hide...")
+    if not st.session_state.sandbox:
+        with st.spinner("Creating sandbox..."):
+            sbx = create_sandbox()
+            st.session_state.sandbox = sbx
+            st.session_state.mcp_url = setup_hide_mcp(sbx)
 
     with chat:
         # render past chats
@@ -257,6 +279,7 @@ async def main():
                     response_state=st.session_state.responses,
                 ),
                 api_key=st.session_state.api_key,
+                mcp_url=st.session_state.mcp_url,
             )
             # Save chat thread after bot response
             st.session_state.current_thread_id = save_chat_thread(

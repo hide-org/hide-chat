@@ -27,6 +27,8 @@ from anthropic.types.beta import (
     BetaToolUseBlockParam,
 )
 
+from hide_chat.tools.collection import RemoteToolCollection
+
 from .tools import BashTool, EditTool, ToolCollection, ToolResult
 
 COMPUTER_USE_BETA_FLAG = "computer-use-2024-10-22"
@@ -59,12 +61,16 @@ async def sampling_loop(
     ],
     api_key: str,
     max_tokens: int = 4096,
+    mcp_url: str | None = None,
 ):
     """
     Agentic sampling loop for the assistant/tool interaction.
     """
-    tool_collection = ToolCollection(
-        BashTool(),
+    if mcp_url:
+        tool_collection = RemoteToolCollection(url=mcp_url)
+    else:
+        tool_collection = ToolCollection(
+            BashTool(),
         EditTool(),
     )
     system = BetaTextBlockParam(
@@ -84,7 +90,7 @@ async def sampling_loop(
                 messages=messages,
                 model=model,
                 system=[system],
-                tools=tool_collection.to_params(),
+                tools=await tool_collection.to_params(),
                 betas=betas,
                 stream=True,
             )
