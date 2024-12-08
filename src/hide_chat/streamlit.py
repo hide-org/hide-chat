@@ -208,17 +208,6 @@ async def main():
         else:
             st.session_state.auth_validated = True
 
-    if not st.session_state.sandbox:
-        with st.spinner("Setting up sandbox..."):
-            sbx = create_sandbox()
-            st.session_state.sandbox = sbx
-            st.toast("Successfully created sandbox", icon="🖥️")
-
-        with st.spinner("Installing MCP..."):
-            st.session_state.mcp_url = setup_hide_mcp(sbx)
-            st.toast("Successfully installed MCP", icon="🔗")
-            
-        st.toast("All set up!", icon="🚀")
 
     chat, http_logs = st.tabs(["Chat", "HTTP Exchange Logs"])
     new_message = st.chat_input("Type a message to send to Hide...")
@@ -234,6 +223,18 @@ async def main():
                         Sender.TOOL if block["type"] == "tool_result" else message["role"],
                         cast(BetaContentBlockParam | ToolResult, block),
                     )
+
+        if not st.session_state.sandbox:
+            with st.spinner("Setting up sandbox..."):
+                sbx = create_sandbox()
+                st.session_state.sandbox = sbx
+                st.toast("Successfully created sandbox", icon="🖥️")
+
+            with st.spinner("Installing MCP..."):
+                st.session_state.mcp_url = setup_hide_mcp(sbx)
+                st.toast("Successfully installed MCP", icon="🔗")
+                
+            st.toast("All set up!", icon="🚀")
 
         # render past http exchanges
         for identity, (request, response) in st.session_state.responses.items():
