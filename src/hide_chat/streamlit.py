@@ -150,16 +150,14 @@ async def main():
         if st.button("New Chat", type="primary", use_container_width=True):
             st.session_state.messages = []
             st.session_state.current_thread_id = None
-            with st.spinner("Creating sandbox..."):
-                if st.session_state.sandbox:
-                    kill_sandbox(st.session_state.sandbox)
-                sbx = create_sandbox()
-                st.session_state.sandbox = sbx
-                st.session_state.mcp_url = setup_hide_mcp(sbx)
+            if st.session_state.sandbox:
+                kill_sandbox(st.session_state.sandbox)
+            st.session_state.sandbox = None
+            st.session_state.mcp_url = None
             st.rerun()
-        
+
         st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
-        
+
         # List existing threads with better formatting
         for thread_id, thread_data in sorted(
             st.session_state.chat_threads.items(),
@@ -167,11 +165,11 @@ async def main():
             reverse=True
         ):
             timestamp = datetime.fromisoformat(thread_data["last_updated"]).strftime("%b %d, %H:%M")
-            
+
             with st.container():
                 preview_text = thread_data["preview"]
                 timestamp_text = f":clock2: {timestamp}"
-                
+
                 if st.button(
                     f"{preview_text}\n\n{timestamp_text}",
                     key=f"thread_{thread_id}",
@@ -183,14 +181,12 @@ async def main():
                         del st.session_state.current_type
                     st.session_state.current_thread_id = thread_id
                     st.session_state.messages = thread_data["messages"]
-                    with st.spinner("Creating sandbox..."):
-                        if st.session_state.sandbox:
-                            kill_sandbox(st.session_state.sandbox)
-                        sbx = create_sandbox()
-                        st.session_state.sandbox = sbx
-                        st.session_state.mcp_url = setup_hide_mcp(sbx)
+                    if st.session_state.sandbox:
+                        kill_sandbox(st.session_state.sandbox)
+                    st.session_state.sandbox = None
+                    st.session_state.mcp_url = None
                     st.rerun()
-        
+
         # Place Reset button at the bottom
         st.markdown(
             """
@@ -205,7 +201,6 @@ async def main():
                 st.session_state.clear()
                 setup_state()
 
-
     if not st.session_state.auth_validated:
         if auth_error := validate_auth(st.session_state.api_key):
             st.warning(f"Please resolve the following auth issue:\n\n{auth_error}")
@@ -213,13 +208,20 @@ async def main():
         else:
             st.session_state.auth_validated = True
 
-    chat, http_logs = st.tabs(["Chat", "HTTP Exchange Logs"])
-    new_message = st.chat_input("Type a message to send to Hide...")
     if not st.session_state.sandbox:
-        with st.spinner("Creating sandbox..."):
+        with st.spinner("Setting up sandbox..."):
             sbx = create_sandbox()
             st.session_state.sandbox = sbx
+            st.toast("Successfully created sandbox", icon="🖥️")
+
+        with st.spinner("Installing MCP..."):
             st.session_state.mcp_url = setup_hide_mcp(sbx)
+            st.toast("Successfully installed MCP", icon="🔗")
+            
+        st.toast("All set up!", icon="🚀")
+
+    chat, http_logs = st.tabs(["Chat", "HTTP Exchange Logs"])
+    new_message = st.chat_input("Type a message to send to Hide...")
 
     with chat:
         # render past chats
@@ -243,7 +245,7 @@ async def main():
                 {
                     "role": Sender.USER,
                     "content": [
-                        *maybe_add_interruption_blocks(),
+                        # *maybe_add_interruption_blocks(),
                         BetaTextBlockParam(type="text", text=new_message),
                     ],
                 }
