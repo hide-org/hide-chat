@@ -71,17 +71,17 @@ async def sampling_loop(
     else:
         tool_collection = ToolCollection(
             BashTool(),
-        EditTool(),
-    )
+            EditTool(),
+        )
     system = BetaTextBlockParam(
         type="text",
         text=f"{SYSTEM_PROMPT}{' ' + system_prompt_suffix if system_prompt_suffix else ''}",
     )
 
     while True:
-        client = Anthropic(api_key=api_key, max_retries=4)
+        client = Anthropic(api_key=api_key, max_retries=16)
         betas = [PROMPT_CACHING_BETA_FLAG, COMPUTER_USE_BETA_FLAG]
-        _inject_prompt_caching(messages)
+        # _inject_prompt_caching(messages)
         system["cache_control"] = {"type": "ephemeral"}
 
         try:
@@ -100,19 +100,23 @@ async def sampling_loop(
             accumulated_content = []
             response_params = []
             current_block = None
-            
+
             for chunk in raw_response.parse():
-                accumulated_content.append(chunk.model_dump_json())  # Accumulate the content
+                accumulated_content.append(
+                    chunk.model_dump_json()
+                )  # Accumulate the content
                 if chunk.type == "message_start":
                     continue
                 elif chunk.type == "content_block_start":
                     current_block = {"type": chunk.content_block.type}
                     if chunk.content_block.type == "tool_use":
-                        current_block.update({
-                            "name": chunk.content_block.name,
-                            "id": chunk.content_block.id,
-                            "input": ""
-                        })
+                        current_block.update(
+                            {
+                                "name": chunk.content_block.name,
+                                "id": chunk.content_block.id,
+                                "input": "",
+                            }
+                        )
                 elif chunk.type == "content_block_delta":
                     if current_block["type"] == "text":
                         if "text" not in current_block:
@@ -135,16 +139,13 @@ async def sampling_loop(
                 status_code=raw_response.http_response.status_code,
                 headers=raw_response.http_response.headers,
                 content=f'[{",".join(accumulated_content)}]'.encode(),
-                request=request
+                request=request,
             )
             api_response_callback(request, response, None)
 
             # Add the assistant's response to messages
             if response_params:
-                messages.append({
-                    "role": "assistant",
-                    "content": response_params
-                })
+                messages.append({"role": "assistant", "content": response_params})
 
             tool_result_content: list[BetaToolResultBlockParam] = []
             for content_block in response_params:
