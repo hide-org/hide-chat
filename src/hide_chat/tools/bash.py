@@ -1,5 +1,6 @@
 import asyncio
 import os
+from pathlib import Path
 from typing import ClassVar, Literal
 
 from anthropic.types.beta import BetaToolBash20241022Param
@@ -26,6 +27,15 @@ class _BashSession:
         if self._started:
             return
 
+        # Remove VIRTUAL_ENV added by uv
+        env = dict(os.environ)
+        env.pop("VIRTUAL_ENV", None)  # None as default in case it doesn't exist
+
+        # Remove the venv entry added by uv
+        path_parts = env["PATH"].split(":")
+        venv_free_path = ":".join(p for p in path_parts if ".venv" not in p)
+        env["PATH"] = venv_free_path
+
         self._process = await asyncio.create_subprocess_shell(
             self.command,
             preexec_fn=os.setsid,
@@ -33,7 +43,9 @@ class _BashSession:
             bufsize=0,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=str(Path.home()),
+            env=env,
         )
 
         self._started = True
@@ -63,7 +75,7 @@ class _BashSession:
         # we know these are not None because we created the process with PIPEs
         assert self._process.stdin
         assert self._process.stdout
-        assert self._process.stderr
+        # assert self._process.stderr
 
         # send command to the process
         self._process.stdin.write(
@@ -92,15 +104,15 @@ class _BashSession:
         if output.endswith("\n"):
             output = output[:-1]
 
-        error = self._process.stderr._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
-        if error.endswith("\n"):
-            error = error[:-1]
+        # error = self._process.stderr._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
+        # if error.endswith("\n"):
+        #     error = error[:-1]
 
         # clear the buffers so that the next output can be read correctly
         self._process.stdout._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
-        self._process.stderr._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
+        # self._process.stderr._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
 
-        return CLIResult(output=output, error=error)
+        return CLIResult(output=output)
 
 
 class BashTool(BaseAnthropicTool):
