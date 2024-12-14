@@ -147,6 +147,7 @@ async def main():
     st.title("Hide Chat")
 
     with st.sidebar:
+        remote = st.toggle("Remote")
         if st.button("New Chat", type="primary", use_container_width=True):
             st.session_state.messages = []
             st.session_state.current_thread_id = None
@@ -224,7 +225,7 @@ async def main():
                         cast(BetaContentBlockParam | ToolResult, block),
                     )
 
-        if not st.session_state.sandbox:
+        if remote and not st.session_state.sandbox:
             with st.spinner("Setting up sandbox..."):
                 sbx = create_sandbox()
                 st.session_state.sandbox = sbx
@@ -436,7 +437,8 @@ def _render_message(
         st.session_state.current_type != message_type):
         st.session_state.current_message = st.chat_message(sender)
         if message_type in ["tool_use", "tool_result"]:
-            with st.session_state.current_message.expander(message_type.replace("_", " ").title(), expanded=False):
+            label = f"Tool: {message["name"]}" if message_type == "tool_use" else message_type.replace("_", " ").title()
+            with st.session_state.current_message.expander(label, expanded=False):
                 st.session_state.current_placeholder = st.empty()
         else:
             st.session_state.current_placeholder = st.session_state.current_message.empty()
@@ -463,9 +465,15 @@ def _render_message(
                 f'Tool: {message["name"]}\nInput: {message["input"]}'
             )
         elif message["type"] == "tool_result":
-            for content in message.get("content", []):
-                if content.get("type") == "text":
-                    st.session_state.current_placeholder.code(content.get("text"))
+            content = message.get("content", None)
+            if isinstance(content, list):
+                # TODO: handle multiple tool results
+                for c in content:
+                    if c.get("type") == "text":
+                        st.session_state.current_placeholder.code(c.get("text"))
+
+            if isinstance(content, str):
+                st.session_state.current_placeholder.code(content)
         else:
             raise Exception(f'Unexpected response type {message["type"]}')
     else:
